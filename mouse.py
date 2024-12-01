@@ -2,6 +2,26 @@ import cv2
 import RPi.GPIO as GPIO
 import time
 import numpy as np
+from PIL import Image
+
+def get_limits(color):
+    c = np.uint8([[color]])  # BGR values
+    hsvC = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
+
+    hue = hsvC[0][0][0]  # Get the hue value
+
+    # Handle red hue wrap-around
+    if hue >= 165:  # Upper limit for divided red hue
+        lowerLimit = np.array([hue - 10, 100, 100], dtype=np.uint8)
+        upperLimit = np.array([180, 255, 255], dtype=np.uint8)
+    elif hue <= 15:  # Lower limit for divided red hue
+        lowerLimit = np.array([0, 100, 100], dtype=np.uint8)
+        upperLimit = np.array([hue + 10, 255, 255], dtype=np.uint8)
+    else:
+        lowerLimit = np.array([hue - 10, 100, 100], dtype=np.uint8)
+        upperLimit = np.array([hue + 10, 255, 255], dtype=np.uint8)
+
+    return lowerLimit, upperLimit
 
 # GPIO setup for servos
 GPIO.setmode(GPIO.BCM)
@@ -37,12 +57,16 @@ try:
         # Convert frame to HSV color space
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
-        # Define color range for object to track (e.g., red color)
-        lower_color = np.array([0, 70, 50])
-        upper_color = np.array([10, 255, 255])
+        # Define color range for red color
+        lower_color1 = np.array([0, 100, 100])
+        upper_color1 = np.array([10, 255, 255])
+        lower_color2 = np.array([160, 100, 100])
+        upper_color2 = np.array([180, 255, 255])
 
-        # Create a mask for the color
-        mask = cv2.inRange(hsv, lower_color, upper_color)
+        # Create masks for the color
+        mask1 = cv2.inRange(hsv, lower_color1, upper_color1)
+        mask2 = cv2.inRange(hsv, lower_color2, upper_color2)
+        mask = cv2.bitwise_or(mask1, mask2)
         
         # Find contours in the mask
         if int(cv2.__version__.split('.')[0]) >= 4:
@@ -75,6 +99,8 @@ try:
             cv2.circle(frame, (object_center_x, object_center_y), 5, (0, 255, 0), -1)
             # Draw the bounding rectangle
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        else:
+            print("No object detected.")
         
         # Display the frame
         cv2.imshow('Object Tracking', frame)
