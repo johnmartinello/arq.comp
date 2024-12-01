@@ -40,11 +40,11 @@ gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
 gray1 = cv2.GaussianBlur(gray1, (21, 21), 0)
 
 # Initial servo positions
-position_x = 90
-position_y = 90
+position_x = 180
+position_y = 180
 
 # Smoothing factor
-smooth_factor = 0.1
+smooth_factor = 0.3
 
 while True:
     # Read the next frame
