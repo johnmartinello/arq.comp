@@ -10,16 +10,9 @@ def get_limits(color):
 
     hue = hsvC[0][0][0]  # Get the hue value
 
-    # Handle red hue wrap-around
-    if hue >= 165:  # Upper limit for divided red hue
-        lowerLimit = np.array([hue - 10, 100, 100], dtype=np.uint8)
-        upperLimit = np.array([180, 255, 255], dtype=np.uint8)
-    elif hue <= 15:  # Lower limit for divided red hue
-        lowerLimit = np.array([0, 100, 100], dtype=np.uint8)
-        upperLimit = np.array([hue + 10, 255, 255], dtype=np.uint8)
-    else:
-        lowerLimit = np.array([hue - 10, 100, 100], dtype=np.uint8)
-        upperLimit = np.array([hue + 10, 255, 255], dtype=np.uint8)
+    # Handle blue hue range
+    lowerLimit = np.array([hue - 10, 100, 100], dtype=np.uint8)
+    upperLimit = np.array([hue + 10, 255, 255], dtype=np.uint8)
 
     return lowerLimit, upperLimit
 
@@ -57,16 +50,12 @@ try:
         # Convert frame to HSV color space
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
-        # Define color range for red color
-        lower_color1 = np.array([0, 100, 100])
-        upper_color1 = np.array([10, 255, 255])
-        lower_color2 = np.array([160, 100, 100])
-        upper_color2 = np.array([180, 255, 255])
+        # Define color range for blue color
+        lower_color = np.array([100, 150, 0])
+        upper_color = np.array([140, 255, 255])
 
-        # Create masks for the color
-        mask1 = cv2.inRange(hsv, lower_color1, upper_color1)
-        mask2 = cv2.inRange(hsv, lower_color2, upper_color2)
-        mask = cv2.bitwise_or(mask1, mask2)
+        # Create a mask for the color
+        mask = cv2.inRange(hsv, lower_color, upper_color)
         
         # Find contours in the mask
         if int(cv2.__version__.split('.')[0]) >= 4:
