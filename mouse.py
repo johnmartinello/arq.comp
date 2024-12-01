@@ -1,91 +1,174 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb 17 15:39:33 2022
+
+@author: rnmic
+"""
+
 import cv2
+import cv2.aruco as aruco
 import numpy as np
-import RPi.GPIO as GPIO
-import time
+from gpiozero import AngularServo
+import math
+from time import sleep
+from gpiozero.pins.pigpio import PiGPIOFactory
 
-# GPIO setup for servos
-GPIO.setmode(GPIO.BCM)
-servo_pin_x = 20
-servo_pin_y = 21
-GPIO.setup(servo_pin_x, GPIO.OUT)
-GPIO.setup(servo_pin_y, GPIO.OUT)
+print("Starting")
+def findArucoMarkers(img, markerSize=4, totalMarkers=250, draw=True):
+    arucoDict = aruco.Dictionary_get(aruco.DICT_ARUCO_ORIGINAL)
+    arucoParam = aruco.DetectorParameters_create()
+    bbox, ids, rejected = aruco.detectMarkers(img, arucoDict, parameters=arucoParam)
+    
+    if draw:
+        aruco.drawDetectedMarkers(img,bbox)
+    return bbox, ids, rejected
 
-# Initialize PWM for servos
-pwm_x = GPIO.PWM(servo_pin_x, 50)  # 50Hz frequency
-pwm_y = GPIO.PWM(servo_pin_y, 50)
-pwm_x.start(7.5)  # Center position (90 degrees)
-pwm_y.start(7.5)
+def getCentre(bboxtl,bboxbr):
+        centre = int((bboxtl[0]+bboxbr[0])/2), int((bboxtl[1]+bboxbr[1])/2)
+        return centre
 
-def set_servo_angle(pwm, angle):
-    duty = 2.5 + (angle / 18.0)  # Convert angle to duty cycle
-    pwm.ChangeDutyCycle(duty)
-    time.sleep(0.02)
+def getDesired(img):
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Get aruco
+    bbox, ids, rejected = findArucoMarkers(img, markerSize=4, totalMarkers=250, draw=True)
+    
+    if np.any(ids == None):
+        ret = 0
+        centre = None
+    else:
+        bboxtl = bbox[0][0][0][0],bbox[0][0][0][1]
+        bboxbr = bbox[0][0][2][0],bbox[0][0][2][1]
 
-# Initialize camera
-cap = cv2.VideoCapture(0)
+        centre = getCentre(bboxtl,bboxbr)
+        ret = 1
+        print(centre)
+    return centre, ret
 
-# Set camera resolution
-cap.set(3, 480)
-cap.set(4, 320)
-
-_, frame = cap.read()
-rows, cols, _ = frame.shape
-
-x_medium = int(cols / 2)
-y_medium = int(rows / 2)
-center_x = int(cols / 2)
-center_y = int(rows / 2)
-position_x = 90  # degrees
-position_y = 90  # degrees
-
-try:
-    while True:
-        _, frame = cap.read()
-        hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+class arucoMarker():
+    def __init__(self):
+        self.bboxtl = None
+        self.bboxbr = None
+        self.centre = None
+    
+      
+def getArucos(img):
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Get aruco
+    arucos = list()
+    bboxs, ids, rejected = findArucoMarkers(img, markerSize=4, totalMarkers=250, draw=True)
+    
+    if np.any(ids == None):
+        ret = 0
+    else:
+        for bbox in bboxs:
+            aruco = arucoMarker()
+            aruco.bboxtl = bbox[0][0][0],bbox[0][0][1]
+            aruco.bboxbr = bbox[0][2][0],bbox[0][2][1]
+            aruco.centre = arucoMarker.getCentre(aruco.bboxtl,aruco.bboxbr)
+            
+            arucos.append(aruco)
         
-        # BLUE COLOR
-        low_blue = np.array([94, 80, 2])
-        high_blue = np.array([126, 255, 255])
+        ret = 1
+    return arucos, ret
+
+def getAdjustment(windowMax, x):
+    normalised_adjustment = x/windowMax - 0.5
+    adjustment_magnitude = abs(round(normalised_adjustment,1))
+
+    if normalised_adjustment>0:
+        adjustment_direction = -1
+    else:
+        adjustment_direction = 1
         
-        blue_mask = cv2.inRange(hsv_frame, low_blue, high_blue)
-        contours, _ = cv2.findContours(blue_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        contours = sorted(contours, key=lambda x: cv2.contourArea(x), reverse=True)
+    return adjustment_magnitude, adjustment_direction
 
-        for cnt in contours:
-            (x, y, w, h) = cv2.boundingRect(cnt)
-            x_medium = int((x + x + w) / 2)
-            y_medium = int((y + y + h) / 2)
-            break
+def rescale_frame(frame, percent):
+    width = int(frame.shape[1] * percent/ 100)
+    height = int(frame.shape[0] * percent/ 100)
+    dim = (width, height)
+    return cv2.resize(frame, dim, interpolation =cv2.INTER_AREA)
+
+vid = cv2.VideoCapture(0)
+print("Video started")
+
+# Initialise servos
+pigpio_factory = PiGPIOFactory()
+
+servo1 = AngularServo(18, pin_factory= pigpio_factory)
+servo2 = AngularServo(23, pin_factory= pigpio_factory)
+servo1_now = 0
+servo2_now = 0
+servo1.angle = servo1_now
+servo2.angle = servo2_now
+sleep(2)
+print("Initialised servos.")
+
+# Constants
+cx = -1 # Have to change sign because this servo rotates in the wrong direction
+cy = 1
+
+Kp = 80
+Kd = 10
+
+while(True):
+    # Get image
+    ret, img = vid.read()
+    img = rescale_frame(img,50)
+    window = img.shape
+    
+    # Get arucos
+    arucos, ret = getArucos(img)
+    
+    if ret ==0:
+        pass
+    else:
+            
+        # Calculate AB (pixel error)
+        A = (0,0)
+        B = arucos[0].centre
         
-        cv2.line(frame, (x_medium, 0), (x_medium, rows), (0, 255, 0), 2)
-        cv2.line(frame, (0, y_medium), (cols, y_medium), (0, 255, 0), 2)
-
-        # Move servo motor
-        if x_medium < center_x - 30:
-            position_x += 1
-        elif x_medium > center_x + 30:
-            position_x -= 1
-
-        if y_medium < center_y - 30:
-            position_y += 1
-        elif y_medium > center_y + 30:
-            position_y -= 1
-
-        position_x = max(0, min(180, position_x))
-        position_y = max(0, min(180, position_y))
-
-        set_servo_angle(pwm_x, position_x)
-        set_servo_angle(pwm_y, position_y)
-
-        cv2.imshow("Frame", frame)
-        key = cv2.waitKey(1)
+        # show image
+        cv2.imshow("image",img)
+        cv2.waitKey(1)
         
-        if key == ord('q'):
-            break
+        # Get adjustment
+        xmag, xdir = getAdjustment(window[0],B[1])
+        ymag, ydir = getAdjustment(window[1],B[0])
 
-finally:
-    cap.release()
-    cv2.destroyAllWindows()
-    pwm_x.stop()
-    pwm_y.stop()
-    GPIO.cleanup()
+        if xmag!=None:
+            
+            # Proportional
+            adj_Kpx = cx*Kp*xdir*xmag
+            adj_Kpy = cy*Kp*ydir*ymag
+            
+            #Derivative
+            xmag_old = xmag
+            ymag_old = ymag
+            
+            adj_Kdx = cx*Kd*xdir*(xmag-xmag_old)
+            adj_Kdy = cy*Kd*ydir*(ymag-ymag_old)
+                        
+            #adustment
+            adjustment_x = adj_Kpx + adj_Kdx
+            adjustment_y = adj_Kpy + adj_Kdy
+            #servo
+            servo1_now = servo1_now + adjustment_x
+            servo2_now = servo2_now + adjustment_y
+            
+            # Reset line of sight if instructed to look out of bounds            
+            if (servo1_now>90 or servo1_now<-90):
+                servo1_now = 0
+            if (servo2_now>90 or servo2_now<-90):
+                servo2_now = 0
+
+            servo1.angle = servo1_now
+            servo2.angle = servo2_now
+            sleep(0.00001)
+
+         
+        xmag = 0
+        xdir = 0
+        ymag = 0
+        ydir = 0
