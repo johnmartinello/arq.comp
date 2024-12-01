@@ -1,140 +1,111 @@
-import cv2
-import numpy as np
-import RPi.GPIO as GPIO
+import pyautogui
 import time
+import RPi.GPIO as GPIO
+from math import floor
 
-# GPIO setup for servos
-GPIO.setmode(GPIO.BCM)
-servo_pin_x = 20
-servo_pin_y = 21
-GPIO.setup(servo_pin_x, GPIO.OUT)
-GPIO.setup(servo_pin_y, GPIO.OUT)
+class MouseServoSimulator:
+    def __init__(self, min_angle=0, max_angle=180):
+        # Configuration
+        self.min_angle = min_angle
+        self.max_angle = max_angle
+        
+        # Get screen resolution
+        self.screen_width, self.screen_height = pyautogui.size()
+        
+        # Store last angles to avoid unnecessary updates
+        self.last_angle_x = None
+        self.last_angle_y = None
+        
+        # Visual display settings
+        self.update_counter = 0
+        self.display_interval = 20  # Update display every 20 iterations
+        
+        # GPIO setup for servos
+        GPIO.setmode(GPIO.BCM)
+        self.servo_pin_x = 20
+        self.servo_pin_y = 21
+        GPIO.setup(self.servo_pin_x, GPIO.OUT)
+        GPIO.setup(self.servo_pin_y, GPIO.OUT)
+        
+        # Initialize PWM for servos
+        self.pwm_x = GPIO.PWM(self.servo_pin_x, 50)  # 50Hz frequency
+        self.pwm_y = GPIO.PWM(self.servo_pin_y, 50)
+        self.pwm_x.start(7.5)  # Center position (90 degrees)
+        self.pwm_y.start(7.5)
+        
+    def map_position_to_angle(self, position, max_position):
+        """Map screen position to servo angle"""
+        return (position / max_position) * (self.max_angle - self.min_angle) + self.min_angle
+    
+    def set_servo_angle(self, pwm, angle):
+        """Set the servo angle"""
+        duty = 2.5 + (angle / 18.0)  # Convert angle to duty cycle
+        pwm.ChangeDutyCycle(duty)
+        time.sleep(0.02)
+    
+    def display_position(self, x, y, angle_x, angle_y):
+        """Display a visual representation of the servo positions"""
+        # Clear screen (Windows)
+        if self.update_counter % self.display_interval == 0:
+            print('\033[2J\033[H', end='')  # Clear screen and move cursor to top
+            print("Mouse Position Servo Simulator")
+            print("============================")
+            print(f"Screen Resolution: {self.screen_width}x{self.screen_height}")
+            print(f"Mouse Position: X={x}, Y={y}")
+            print(f"Servo Angles: X={angle_x:.1f}°, Y={angle_y:.1f}°")
+            print("\nVisual Representation:")
+            print("X-Axis Servo: ", end='')
+            self.draw_servo_position(angle_x)
+            print("\nY-Axis Servo: ", end='')
+            self.draw_servo_position(angle_y)
+            print("\n\nPress Ctrl+C to exit")
+        
+        self.update_counter += 1
 
-# Initialize PWM for servos
-pwm_x = GPIO.PWM(servo_pin_x, 50)  # 50Hz frequency
-pwm_y = GPIO.PWM(servo_pin_y, 50)
-# center at 90 degrees
-pwm_x.start(7.5)
-pwm_y.start(7.5)
+    def draw_servo_position(self, angle):
+        """Draw a simple ASCII representation of servo position"""
+        total_width = 50
+        position = int((angle - self.min_angle) / (self.max_angle - self.min_angle) * total_width)
+        bar = '-' * position + '|' + '-' * (total_width - position)
+        print(f"[{bar}] {angle:.1f}°")
 
-def set_servo_angle(pwm, angle):
-    duty = 2.5 + (angle / 18.0)  # Convert angle to duty cycle
-    pwm.ChangeDutyCycle(duty)
-    time.sleep(0.02)
+    def track_mouse(self):
+        """Main loop to track mouse position and control servos"""
+        print("Starting mouse tracking simulation.")
+        print("Move your mouse around the screen to see servo positions.")
+        print("Press Ctrl+C to exit.")
+        
+        try:
+            while True:
+                # Get current mouse position
+                x, y = pyautogui.position()
+                
+                # Map positions to angles
+                angle_x = self.map_position_to_angle(x, self.screen_width)
+                angle_y = self.map_position_to_angle(y, self.screen_height)
+                
+                # Update servos
+                if angle_x != self.last_angle_x:
+                    self.set_servo_angle(self.pwm_x, angle_x)
+                    self.last_angle_x = angle_x
+                if angle_y != self.last_angle_y:
+                    self.set_servo_angle(self.pwm_y, angle_y)
+                    self.last_angle_y = angle_y
+                
+                # Display positions
+                self.display_position(x, y, angle_x, angle_y)
+                
+                # Short delay
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Clean up GPIO on exit
+            self.pwm_x.stop()
+            self.pwm_y.stop()
+            GPIO.cleanup()
+            print("Servo control stopped.")
 
-# Initialize video capture
-cap = cv2.VideoCapture(0)
-
-# Read the first frame
-ret, frame1 = cap.read()
-if not ret:
-    print("Failed to grab frame")
-    exit()
-
-# Rotate the frame by 90 degrees clockwise
-frame1 = cv2.transpose(frame1)
-frame1 = cv2.flip(frame1, 1)
-
-# Convert frame to grayscale and blur it
-gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-gray1 = cv2.GaussianBlur(gray1, (21, 21), 0)
-
-# Initial servo positions
-position_x = 180
-position_y = 180
-
-# Smoothing factor
-smooth_factor = 0.3
-
-while True:
-    # Read the next frame
-    ret, frame2 = cap.read()
-    if not ret:
-        break
-
-    # Rotate the frame by 90 degrees clockwise
-    frame2 = cv2.transpose(frame2)
-    frame2 = cv2.flip(frame2, 1)
-
-    # Convert frame to HSV color space
-    hsv = cv2.cvtColor(frame2, cv2.COLOR_BGR2HSV)
-
-    # Define color range for red color
-    lower_red1 = np.array([0, 70, 50])
-    upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([170, 70, 50])
-    upper_red2 = np.array([180, 255, 255])
-
-    # Create masks for the red color
-    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    red_mask = cv2.bitwise_or(mask1, mask2)
-
-    # Invert the red mask to filter out red color
-    mask = cv2.bitwise_not(red_mask)
-
-    # Apply the mask to the frame
-    frame2 = cv2.bitwise_and(frame2, frame2, mask=mask)
-
-    # Convert frame to grayscale and blur it
-    gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-    gray2 = cv2.GaussianBlur(gray2, (21, 21), 0)
-
-    # Compute the absolute difference between the two frames
-    diff = cv2.absdiff(gray1, gray2)
-
-    # Threshold the difference image
-    _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
-
-    # Dilate the thresholded image to fill in holes
-    thresh = cv2.dilate(thresh, None, iterations=2)
-
-    # Find contours on the thresholded image
-    _, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if contours:
-        # Optional: Filter out small contours
-        filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > 500]
-        if filtered_contours:
-            # Combine all contours into one
-            all_contours = np.vstack(filtered_contours)
-            # Get the bounding rectangle for the combined contours
-            x, y, w, h = cv2.boundingRect(all_contours)
-            # Calculate the center of the object
-            object_center_x = x + w // 2
-            object_center_y = y + h // 2
-
-            # Map coordinates to servo angles (0-180)
-            height, width, _ = frame2.shape
-            target_x = np.interp(object_center_x, [0, width], [0, 180])
-            target_y = np.interp(object_center_y, [0, height], [0, 180])
-
-            # Smooth the movement
-            position_x += (target_x - position_x) * smooth_factor
-            position_y += (target_y - position_y) * smooth_factor
-
-            # Update servo positions
-            set_servo_angle(pwm_x, position_x)
-            set_servo_angle(pwm_y, position_y)
-
-            # Draw a circle at the object's center
-            cv2.circle(frame2, (object_center_x, object_center_y), 5, (0, 255, 0), -1)
-            # Draw the bounding rectangle
-            cv2.rectangle(frame2, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-    # Show the result
-    cv2.imshow("Motion Tracking", frame2)
-
-    # Update the previous frame
-    gray1 = gray2.copy()
-
-    # Exit on 'q' key press
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-# Release resources
-cap.release()
-cv2.destroyAllWindows()
-pwm_x.stop()
-pwm_y.stop()
-GPIO.cleanup()
+if __name__ == "__main__":
+    simulator = MouseServoSimulator()
+    simulator.track_mouse()
