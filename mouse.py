@@ -1,124 +1,120 @@
-import pyautogui
 import time
 from math import floor
+from pynput import mouse
+import RPi.GPIO as GPIO
 
 class MouseServoSimulator:
-    def __init__(self, min_angle=0, max_angle=180, sensitivity=0.2):
+    def __init__(self, min_angle=0, max_angle=180):
         # Configuration
         self.min_angle = min_angle
         self.max_angle = max_angle
-        self.sensitivity = sensitivity  # Threshold for angle change detection
         
-        # Get screen resolution
-        self.screen_width, self.screen_height = pyautogui.size()
-        
-        # Store last positions and angles to avoid unnecessary updates
-        self.last_x = None
-        self.last_y = None
+        # Store last angles to avoid unnecessary updates
         self.last_angle_x = None
         self.last_angle_y = None
         
-        # Performance and display settings
+        # Visual display settings
         self.update_counter = 0
-        self.display_interval = 10  # Reduced update interval for more responsiveness
-        self.max_update_frequency = 0.05  # Maximum update frequency (20 times per second)
+        self.display_interval = 20  # Update display every 20 iterations
         
-        # Performance tracking
-        self.last_update_time = 0
-
+        # Initial servo positions
+        self.position_x = 90
+        self.position_y = 90
+        
+        # Smoothing factor
+        self.smooth_factor = 0.1
+        
+        # GPIO setup for servos
+        GPIO.setmode(GPIO.BCM)
+        self.servo_pin_x = 20
+        self.servo_pin_y = 21
+        GPIO.setup(self.servo_pin_x, GPIO.OUT)
+        GPIO.setup(self.servo_pin_y, GPIO.OUT)
+        
+        # Initialize PWM for servos
+        self.pwm_x = GPIO.PWM(self.servo_pin_x, 50)  # 50Hz frequency
+        self.pwm_y = GPIO.PWM(self.servo_pin_y, 50)
+        self.pwm_x.start(7.5)  # Center position (90 degrees)
+        self.pwm_y.start(7.5)
+        
     def map_position_to_angle(self, position, max_position):
-        """Map screen position to servo angle with improved precision"""
-        mapped_angle = (position / max_position) * (self.max_angle - self.min_angle) + self.min_angle
-        return round(mapped_angle, 2)  # Round to two decimal places for precision
-
+        """Map screen position to servo angle"""
+        return (position / max_position) * (self.max_angle - self.min_angle) + self.min_angle
+    
+    def set_servo_angle(self, pwm, angle):
+        """Set the servo angle"""
+        duty = 2.5 + (angle / 18.0)  # Convert angle to duty cycle
+        pwm.ChangeDutyCycle(duty)
+        time.sleep(0.02)
+    
     def display_position(self, x, y, angle_x, angle_y):
-        """Display a more informative visual representation of servo positions"""
-        # Clear screen (cross-platform approach)
-        print('\033[2J\033[H', end='')
+        """Display a visual representation of the servo positions"""
+        # Clear screen (Windows)
+        if self.update_counter % self.display_interval == 0:
+            print('\033[2J\033[H', end='')  # Clear screen and move cursor to top
+            print("Mouse Position Servo Simulator")
+            print("============================")
+            print(f"Mouse Movement: X={x}, Y={y}")
+            print(f"Servo Angles: X={angle_x:.1f}°, Y={angle_y:.1f}°")
+            print("\nVisual Representation:")
+            print("X-Axis Servo: ", end='')
+            self.draw_servo_position(angle_x)
+            print("\nY-Axis Servo: ", end='')
+            self.draw_servo_position(angle_y)
+            print("\n\nPress Ctrl+C to exit")
         
-        print("🖱️  Mouse Position Servo Simulator 🤖")
-        print("====================================")
-        print(f"Screen Resolution: {self.screen_width}x{self.screen_height}")
-        print(f"Mouse Position:    X={x:4d}, Y={y:4d}")
-        print(f"Servo Angles:      X={angle_x:6.2f}°, Y={angle_y:6.2f}°")
-        print("\nVisual Servo Representation:")
-        print("X-Axis Servo: ", end='')
-        self.draw_servo_position(angle_x)
-        print("\nY-Axis Servo: ", end='')
-        self.draw_servo_position(angle_y)
-        print("\n\n💡 Tip: Move mouse to see real-time servo simulation")
-        print("🚪 Press Ctrl+C to exit")
+        self.update_counter += 1
 
     def draw_servo_position(self, angle):
-        """Enhanced ASCII representation of servo position"""
+        """Draw a simple ASCII representation of servo position"""
         total_width = 50
         position = int((angle - self.min_angle) / (self.max_angle - self.min_angle) * total_width)
-        bar = '█' * position + '|' + '░' * (total_width - position)
-        print(f"[{bar}] {angle:6.2f}°")
+        bar = '-' * position + '|' + '-' * (total_width - position)
+        print(f"[{bar}] {angle:.1f}°")
 
-    def is_significant_change(self, current_x, current_y):
-        """Determine if mouse position change is significant"""
-        if self.last_x is None or self.last_y is None:
-            return True
+    def on_move(self, x, y):
+        """Callback function for mouse movement"""
+        # Map positions to angles
+        angle_x = self.map_position_to_angle(x, 1920)  # Assuming a max screen width of 1920
+        angle_y = self.map_position_to_angle(y, 1080)  # Assuming a max screen height of 1080
         
-        # Calculate distance moved
-        distance = ((current_x - self.last_x) ** 2 + (current_y - self.last_y) ** 2) ** 0.5
-        return distance > (self.screen_width * self.sensitivity / 100)
-
+        # Smooth the movement
+        self.position_x += (angle_x - self.position_x) * self.smooth_factor
+        self.position_y += (angle_y - self.position_y) * self.smooth_factor
+        
+        # Update servos
+        if angle_x != self.last_angle_x:
+            self.set_servo_angle(self.pwm_x, self.position_x)
+            self.last_angle_x = angle_x
+        if angle_y != self.last_angle_y:
+            self.set_servo_angle(self.pwm_y, self.position_y)
+            self.last_angle_y = angle_y
+        
+        # Display positions
+        self.display_position(x, y, self.position_x, self.position_y)
+    
     def track_mouse(self):
-        """Optimized main loop for mouse tracking"""
-        print("🖱️  Starting mouse tracking simulation...")
+        """Main loop to track mouse movement and control servos"""
+        print("Starting mouse tracking simulation.")
         print("Move your mouse to see servo positions.")
         print("Press Ctrl+C to exit.")
-
+        
+        # Set up mouse listener
+        listener = mouse.Listener(on_move=self.on_move)
+        listener.start()
+        
         try:
             while True:
-                # Get current time and check update frequency
-                current_time = time.time()
-                if current_time - self.last_update_time < self.max_update_frequency:
-                    time.sleep(0.01)  # Small sleep to reduce CPU usage
-                    continue
-
-                # Get current mouse position
-                x, y = pyautogui.position()
-
-                # Check if position change is significant
-                if self.is_significant_change(x, y):
-                    # Convert positions to angles
-                    angle_x = self.map_position_to_angle(x, self.screen_width)
-                    angle_y = self.map_position_to_angle(y, self.screen_height)
-
-                    # Check if angles have changed significantly
-                    if (self.last_angle_x is None or 
-                        abs(angle_x - self.last_angle_x) > self.sensitivity or
-                        self.last_angle_y is None or 
-                        abs(angle_y - self.last_angle_y) > self.sensitivity):
-
-                        # Periodic display to reduce screen flickering
-                        self.update_counter += 1
-                        if self.update_counter % self.display_interval == 0:
-                            self.display_position(x, y, angle_x, angle_y)
-
-                        # Update tracking variables
-                        self.last_x = x
-                        self.last_y = y
-                        self.last_angle_x = angle_x
-                        self.last_angle_y = angle_y
-                        self.last_update_time = current_time
-
+                time.sleep(0.1)
         except KeyboardInterrupt:
-            print("\n Stopping mouse tracking simulation...")
-
-def main():
-    # Create simulator instance with customizable parameters
-    simulator = MouseServoSimulator(
-        min_angle=0,      # Minimum servo angle
-        max_angle=180,    # Maximum servo angle
-        sensitivity=0.2   # Adjust mouse movement sensitivity (0.1 - 1.0)
-    )
-    
-    # Start tracking
-    simulator.track_mouse()
+            pass
+        finally:
+            # Clean up GPIO on exit
+            self.pwm_x.stop()
+            self.pwm_y.stop()
+            GPIO.cleanup()
+            print("Servo control stopped.")
 
 if __name__ == "__main__":
-    main()
+    simulator = MouseServoSimulator()
+    simulator.track_mouse()
