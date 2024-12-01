@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import RPi.GPIO as GPIO
 import time
-import cv2.aruco as aruco
 
 class ArUcoMarkerTracker:
     def __init__(self, x_servo_pin=20, y_servo_pin=21, forward_x=7.5, forward_y=7.5):
@@ -32,8 +31,8 @@ class ArUcoMarkerTracker:
         self.y_center = forward_y  # Forward-facing Y position
         
         # ArUco dictionary
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
-        self.parameters = aruco.DetectorParameters()
+        self.aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_6X6_250)
+        self.aruco_params = cv2.aruco.DetectorParameters_create()
         
         # Set initial position to forward
         self.set_servo_angle(self.x_pwm, self.x_center)
@@ -56,16 +55,16 @@ class ArUcoMarkerTracker:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
                 # Detect ArUco markers
-                corners, ids, _ = aruco.detectMarkers(
+                corners, ids, _ = cv2.aruco.detectMarkers(
                     gray, 
                     self.aruco_dict, 
-                    parameters=self.parameters
+                    parameters=self.aruco_params
                 )
                 
                 # If markers are detected
                 if ids is not None and len(ids) > 0:
                     # Draw detected markers
-                    aruco.drawDetectedMarkers(frame, corners, ids)
+                    cv2.aruco.drawDetectedMarkers(frame, corners, ids)
                     
                     # Find the first detected marker
                     marker_corners = corners[0][0]
