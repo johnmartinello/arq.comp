@@ -13,7 +13,8 @@ GPIO.setup(servo_pin_y, GPIO.OUT)
 # Initialize PWM for servos
 pwm_x = GPIO.PWM(servo_pin_x, 50)  # 50Hz frequency
 pwm_y = GPIO.PWM(servo_pin_y, 50)
-pwm_x.start(7.5)  # Center position (90 degrees)
+# center at 90 degrees
+pwm_x.start(7.5)
 pwm_y.start(7.5)
 
 def set_servo_angle(pwm, angle):
@@ -55,6 +56,26 @@ while True:
     frame2 = cv2.transpose(frame2)
     frame2 = cv2.flip(frame2, 1)
 
+    # Convert frame to HSV color space
+    hsv = cv2.cvtColor(frame2, cv2.COLOR_BGR2HSV)
+
+    # Define color range for red color
+    lower_red1 = np.array([0, 70, 50])
+    upper_red1 = np.array([10, 255, 255])
+    lower_red2 = np.array([170, 70, 50])
+    upper_red2 = np.array([180, 255, 255])
+
+    # Create masks for the red color
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    red_mask = cv2.bitwise_or(mask1, mask2)
+
+    # Invert the red mask to filter out red color
+    mask = cv2.bitwise_not(red_mask)
+
+    # Apply the mask to the frame
+    frame2 = cv2.bitwise_and(frame2, frame2, mask=mask)
+
     # Convert frame to grayscale and blur it
     gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
     gray2 = cv2.GaussianBlur(gray2, (21, 21), 0)
@@ -69,7 +90,7 @@ while True:
     thresh = cv2.dilate(thresh, None, iterations=2)
 
     # Find contours on the thresholded image
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    _, contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if contours:
         # Optional: Filter out small contours
