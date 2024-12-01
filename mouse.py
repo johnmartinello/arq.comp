@@ -1,94 +1,89 @@
-import pyautogui
+import cv2
+import RPi.GPIO as GPIO
 import time
-from math import floor
+import numpy as np
 
-class MouseServoSimulator:
-    def __init__(self, min_angle=0, max_angle=180):
-        # Configuration
-        self.min_angle = min_angle
-        self.max_angle = max_angle
-        
-        # Get screen resolution
-        self.screen_width, self.screen_height = pyautogui.size()
-        
-        # Store last angles to avoid unnecessary updates
-        self.last_angle_x = None
-        self.last_angle_y = None
-        
-        # Visual display settings
-        self.update_counter = 0
-        self.display_interval = 20  # Update display every 20 iterations
-        
-    def map_position_to_angle(self, position, max_position):
-        """Map screen position to servo angle"""
-        return (position / max_position) * (self.max_angle - self.min_angle) + self.min_angle
-    
-    def display_position(self, x, y, angle_x, angle_y):
-        """Display a visual representation of the servo positions"""
-        # Clear screen (Windows)
-        if self.update_counter % self.display_interval == 0:
-            print('\033[2J\033[H', end='')  # Clear screen and move cursor to top
-            print("Mouse Position Servo Simulator")
-            print("============================")
-            print(f"Screen Resolution: {self.screen_width}x{self.screen_height}")
-            print(f"Mouse Position: X={x}, Y={y}")
-            print(f"Servo Angles: X={angle_x:.1f}°, Y={angle_y:.1f}°")
-            print("\nVisual Representation:")
-            print("X-Axis Servo: ", end='')
-            self.draw_servo_position(angle_x)
-            print("\nY-Axis Servo: ", end='')
-            self.draw_servo_position(angle_y)
-            print("\n\nPress Ctrl+C to exit")
-        
-        self.update_counter += 1
+# GPIO setup for servos
+GPIO.setmode(GPIO.BCM)
+servo_pin_x = 20
+servo_pin_y = 21
+GPIO.setup(servo_pin_x, GPIO.OUT)
+GPIO.setup(servo_pin_y, GPIO.OUT)
 
-    def draw_servo_position(self, angle):
-        """Draw a simple ASCII representation of servo position"""
-        total_width = 50
-        position = int((angle - self.min_angle) / (self.max_angle - self.min_angle) * total_width)
-        bar = '-' * position + '|' + '-' * (total_width - position)
-        print(f"[{bar}] {angle:.1f}°")
+# Initialize PWM for servos
+pwm_x = GPIO.PWM(servo_pin_x, 50)  # 50Hz frequency
+pwm_y = GPIO.PWM(servo_pin_y, 50)
+pwm_x.start(7.5)  # Center position (90 degrees)
+pwm_y.start(7.5)
 
-    def track_mouse(self):
-        """Main loop to track mouse position and simulate servos"""
-        print("Starting mouse tracking simulation.")
-        print("Move your mouse around the screen to see servo positions.")
-        print("Press Ctrl+C to exit.")
+def set_servo_angle(pwm, angle):
+    duty = 2.5 + (angle / 18.0)  # Convert angle to duty cycle
+    pwm.ChangeDutyCycle(duty)
+    time.sleep(0.02)
+
+# Initialize camera
+cap = cv2.VideoCapture(0)
+
+try:
+    while cap.isOpened():
+        success, frame = cap.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
+
+        # Flip the frame if needed
+        frame = cv2.flip(frame, -1)
         
-        try:
-            while True:
-                # Get current mouse position
-                x, y = pyautogui.position()
-                
-                # Convert positions to angles
-                angle_x = self.map_position_to_angle(x, self.screen_width)
-                angle_y = self.map_position_to_angle(y, self.screen_height)
-                
-                # Check if angles have changed significantly
-                if (self.last_angle_x is None or abs(angle_x - self.last_angle_x) > 0.1 or
-                    self.last_angle_y is None or abs(angle_y - self.last_angle_y) > 0.1):
-                    
-                    # Display the position
-                    self.display_position(x, y, angle_x, angle_y)
-                    
-                    self.last_angle_x = angle_x
-                    self.last_angle_y = angle_y
-                
-                # Small delay to prevent excessive CPU usage
-                time.sleep(0.0001)
-                
-        except KeyboardInterrupt:
-            print("\nStopping mouse tracking simulation...")
+        # Convert frame to HSV color space
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Define color range for object to track (e.g., red color)
+        lower_color = np.array([0, 70, 50])
+        upper_color = np.array([10, 255, 255])
 
-def main():
-    # Create simulator instance
-    simulator = MouseServoSimulator(
-        min_angle=0,    # Minimum servo angle
-        max_angle=180   # Maximum servo angle
-    )
-    
-    # Start tracking
-    simulator.track_mouse()
+        # Create a mask for the color
+        mask = cv2.inRange(hsv, lower_color, upper_color)
+        
+        # Find contours in the mask
+        if int(cv2.__version__.split('.')[0]) >= 4:
+            # For OpenCV 4.x
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        else:
+            # For OpenCV 3.x
+            _, contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-if __name__ == "__main__":
-    main()
+        # Proceed if any contours are found
+        if contours:
+            # Find the largest contour
+            largest_contour = max(contours, key=cv2.contourArea)
+            # Get the bounding rectangle of the largest contour
+            x, y, w, h = cv2.boundingRect(largest_contour)
+            # Calculate the center of the object
+            object_center_x = x + w // 2
+            object_center_y = y + h // 2
+            
+            # Map coordinates to servo angles (0-180)
+            height, width, _ = frame.shape
+            servo_x = np.interp(object_center_x, [0, width], [0, 180])
+            servo_y = np.interp(object_center_y, [0, height], [0, 180])
+            
+            # Update servo positions
+            set_servo_angle(pwm_x, servo_x)
+            set_servo_angle(pwm_y, servo_y)
+            
+            # Draw a circle at the object's center
+            cv2.circle(frame, (object_center_x, object_center_y), 5, (0, 255, 0), -1)
+            # Draw the bounding rectangle
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        # Display the frame
+        cv2.imshow('Object Tracking', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+finally:
+    cap.release()
+    cv2.destroyAllWindows()
+    pwm_x.stop()
+    pwm_y.stop()
+    GPIO.cleanup()
