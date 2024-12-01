@@ -2,9 +2,10 @@ import cv2
 import numpy as np
 import RPi.GPIO as GPIO
 import time
+import cv2.aruco as aruco
 
-class BlueObjectTracker:
-    def __init__(self, x_servo_pin=20, y_servo_pin=21):
+class ArUcoMarkerTracker:
+    def __init__(self, x_servo_pin=20, y_servo_pin=21, forward_x=7.5, forward_y=7.5):
         # Setup GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
@@ -26,16 +27,24 @@ class BlueObjectTracker:
         # Camera setup
         self.cap = cv2.VideoCapture(0)
         
-        # Servo calibration (may need adjustment)
-        self.x_center = 7.5  # Neutral position
-        self.y_center = 7.5  # Neutral position
+        # Servo calibration 
+        self.x_center = forward_x  # Forward-facing X position
+        self.y_center = forward_y  # Forward-facing Y position
+        
+        # ArUco dictionary
+        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+        self.parameters = aruco.DetectorParameters()
+        
+        # Set initial position to forward
+        self.set_servo_angle(self.x_pwm, self.x_center)
+        self.set_servo_angle(self.y_pwm, self.y_center)
         
     def set_servo_angle(self, pwm, angle):
         """Convert angle to duty cycle and set servo position"""
         duty = angle / 18 + 2.5
         pwm.ChangeDutyCycle(duty)
         
-    def track_blue_object(self):
+    def track_aruco_marker(self):
         try:
             while True:
                 # Capture frame
@@ -43,40 +52,35 @@ class BlueObjectTracker:
                 if not ret:
                     break
                 
-                # Convert to HSV color space
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                # Convert to grayscale for ArUco detection
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
-                # Define blue color range in HSV
-                lower_blue = np.array([100, 50, 50])
-                upper_blue = np.array([140, 255, 255])
+                # Detect ArUco markers
+                corners, ids, _ = aruco.detectMarkers(
+                    gray, 
+                    self.aruco_dict, 
+                    parameters=self.parameters
+                )
                 
-                # Create mask for blue color
-                mask = cv2.inRange(hsv, lower_blue, upper_blue)
-                
-                # Find contours
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if contours:
-                    # Find the largest blue object
-                    largest_contour = max(contours, key=cv2.contourArea)
+                # If markers are detected
+                if ids is not None and len(ids) > 0:
+                    # Draw detected markers
+                    aruco.drawDetectedMarkers(frame, corners, ids)
                     
-                    # Get bounding rectangle
-                    x, y, w, h = cv2.boundingRect(largest_contour)
+                    # Find the first detected marker
+                    marker_corners = corners[0][0]
                     
-                    # Draw rectangle around the object
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    
-                    # Calculate object center
-                    object_center_x = x + w // 2
-                    object_center_y = y + h // 2
+                    # Calculate marker center
+                    marker_center_x = int(np.mean(marker_corners[:, 0]))
+                    marker_center_y = int(np.mean(marker_corners[:, 1]))
                     
                     # Calculate frame center
                     frame_center_x = frame.shape[1] // 2
                     frame_center_y = frame.shape[0] // 2
                     
                     # Calculate error (deviation from center)
-                    error_x = object_center_x - frame_center_x
-                    error_y = object_center_y - frame_center_y
+                    error_x = marker_center_x - frame_center_x
+                    error_y = marker_center_y - frame_center_y
                     
                     # Simple proportional control
                     # Adjust these gain values to control servo sensitivity
@@ -94,9 +98,13 @@ class BlueObjectTracker:
                     # Update servo positions
                     self.set_servo_angle(self.x_pwm, self.x_center)
                     self.set_servo_angle(self.y_pwm, self.y_center)
+                    
+                    # Draw crosshair at marker center
+                    cv2.drawMarker(frame, (marker_center_x, marker_center_y), 
+                                   (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
                 
                 # Display the frame
-                cv2.imshow('Blue Object Tracking', frame)
+                cv2.imshow('ArUco Marker Tracking', frame)
                 
                 # Exit on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -115,5 +123,5 @@ class BlueObjectTracker:
 
 # Run the tracker
 if __name__ == "__main__":
-    tracker = BlueObjectTracker()
-    tracker.track_blue_object()
+    tracker = ArUcoMarkerTracker()
+    tracker.track_aruco_marker()
