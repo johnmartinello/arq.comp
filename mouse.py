@@ -46,6 +46,7 @@ while True:
             x, y, w, h = cv2.boundingRect(all_contours)
             # Draw the bounding rectangle
             cv2.rectangle(frame2, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    
 
     # Show the result
     cv2.imshow("Motion Tracking", frame2)
